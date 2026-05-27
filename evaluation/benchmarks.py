@@ -299,7 +299,7 @@ class ARC(HFMCQBenchmark):
     def __init__(self, split: str = "test", subset: str = "ARC-Challenge", num_shots: int = 25):
         super().__init__(
             path="allenai/ai2_arc", name=subset, split=split, shot_split="validation", num_shots=num_shots,
-            row_to_doc_fn=lambda r: MCQDoc(r['question'], r['choices']['text'], ord(r['answerKey']) - 65)
+            row_to_doc_fn=lambda r: MCQDoc(r['question'], r['choices']['text'], r['choices']['label'].index(r['answerKey']))
         )
 
 class HellaSwag(HFMCQBenchmark):
