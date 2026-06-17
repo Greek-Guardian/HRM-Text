@@ -1,0 +1,20 @@
+# HRM-XL benchmark 配置.
+# H_cycles / L_cycles 由 run_benchmark.py 5-loop sweep 注入, 此处不设.
+
+local_batch_size: 8        # 每 GPU 序列数
+seq_len: 2048              # 单条序列长度
+vocab_size: 32000          # 与 Qwen 对齐
+fwd_bwd_dtype: bfloat16
+lr: 1.0e-4
+
+# HRM 模型 size yaml (= config/arch/size/XL.yaml 的内容)
+size_yaml:
+  n_layers: 32
+  hidden_size: 1536
+  num_heads: 12
+  expansion: 4
+  norm_type: pre
+  norm_eps: 1.0e-6
+  rope_theta: 10000.0
+  pos_emb_type: rope
+  init_type: lecun_normal

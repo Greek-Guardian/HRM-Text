@@ -1,0 +1,18 @@
+# Qwen benchmark 配置.
+# model_name_or_path 由用户填具体模型 (HF hub 或本地路径).
+
+model_name_or_path: Qwen/Qwen2.5-0.5B   # <-- 改成你要的 size: 0.5B / 1.5B / 3B / 7B
+load_from_pretrained: false              # true=从权重加载; false=只用config随机初始化(训练benchmark够)
+                                          # 推理(vLLM)走真实权重, 必须 load_from_pretrained=true 等价配置
+
+local_batch_size: 8
+seq_len: 2048
+fwd_bwd_dtype: bfloat16
+lr: 1.0e-4
+attn_impl: flash_attention_2
+
+vllm_kwargs:
+  tensor_parallel_size: 1
+  gpu_memory_utilization: 0.85
+  max_model_len: 4096
+  enforce_eager: false
