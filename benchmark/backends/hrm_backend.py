@@ -64,6 +64,7 @@ class HRMBackend(BenchmarkBackend):
         self.seq_len = 2048
         self.vocab_size = 32000
         self.use_fsdp = False
+        self.num_params = 0
 
     # ------------------------- TRAIN -------------------------
     def setup_train(self, cfg: dict) -> None:
@@ -97,6 +98,9 @@ class HRMBackend(BenchmarkBackend):
             for buffer in model.buffers():
                 dist.broadcast(buffer, src=0)
 
+        # Param count BEFORE FSDP wraps params into DTensors.
+        self.num_params = sum(p.numel() for p in model.parameters())
+
         if self.use_fsdp:
             from torch.distributed.fsdp import fully_shard, MixedPrecisionPolicy
             from models.transformer import TransformerBlock
@@ -106,11 +110,18 @@ class HRMBackend(BenchmarkBackend):
             for module in model.modules():
                 if isinstance(module, TransformerBlock):
                     fully_shard(module, mp_policy=mp, reshard_after_forward=False)
-                    module.set_gradient_divide_factor(1.0)
-                    module.set_force_sum_reduction_for_comms(True)
+                    # torch<2.8 fallback. See docs/fsdp_torch_version.md.
+                    if hasattr(module, "set_gradient_divide_factor"):
+                        module.set_gradient_divide_factor(1.0)
+                        module.set_force_sum_reduction_for_comms(True)
+                    else:
+                        module.set_reduce_scatter_divide_factor(1.0)
             fully_shard(model, mp_policy=mp, reshard_after_forward=False)
-            model.set_gradient_divide_factor(1.0)
-            model.set_force_sum_reduction_for_comms(True)
+            if hasattr(model, "set_gradient_divide_factor"):
+                model.set_gradient_divide_factor(1.0)
+                model.set_force_sum_reduction_for_comms(True)
+            else:
+                model.set_reduce_scatter_divide_factor(1.0)
         else:
             # 单卡: 直接 cast 到 fwd dtype
             model = model.to(self.fwd_dtype)

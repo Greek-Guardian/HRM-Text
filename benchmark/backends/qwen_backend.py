@@ -30,6 +30,7 @@ class QwenBackend(BenchmarkBackend):
         self.model_name_or_path = ""
         self.vocab_size = 32000
         self.use_fsdp = False
+        self.num_params = 0
         self._vllm_engine = None  # set in setup_infer
 
     # ------------------------- TRAIN -------------------------
@@ -60,6 +61,9 @@ class QwenBackend(BenchmarkBackend):
                     attn_implementation=cfg.get("attn_impl", "flash_attention_2"),
                 ).to(self.fwd_dtype)
         self.vocab_size = model.config.vocab_size
+
+        # Param count BEFORE FSDP wraps params into DTensors.
+        self.num_params = sum(p.numel() for p in model.parameters())
 
         if self.use_fsdp:
             from torch.distributed.fsdp import fully_shard, MixedPrecisionPolicy

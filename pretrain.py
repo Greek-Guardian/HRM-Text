@@ -124,8 +124,14 @@ def apply_fsdp(module: nn.Module, param_dtype: torch.dtype):
     
     assert isinstance(module, FSDPModule)
     # Disable gradient division. Adams is scale invariant.
-    module.set_gradient_divide_factor(1.0)
-    module.set_force_sum_reduction_for_comms(True)
+    # NOTE: torch<2.8 fallback. Upstream uses set_gradient_divide_factor +
+    # set_force_sum_reduction_for_comms (added in torch 2.8). On 2.7.x only
+    # set_reduce_scatter_divide_factor exists. See docs/fsdp_torch_version.md.
+    if hasattr(module, "set_gradient_divide_factor"):
+        module.set_gradient_divide_factor(1.0)
+        module.set_force_sum_reduction_for_comms(True)
+    else:
+        module.set_reduce_scatter_divide_factor(1.0)
 
 
 def create_model_and_carry(config: PretrainConfig, train_metadata: V1DatasetMeta, local_batch_size: int):

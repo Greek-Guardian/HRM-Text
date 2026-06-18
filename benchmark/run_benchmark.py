@@ -75,6 +75,9 @@ def make_backend(name: str) -> BenchmarkBackend:
 
 def run_train_loop(backend: BenchmarkBackend, cfg: dict, *, warmup: int, steps: int, rank: int) -> dict:
     backend.setup_train(cfg)
+    if rank == 0:
+        n = getattr(backend, "num_params", 0)
+        print(f"[model] backend={backend.name} params={n:,} ({n/1e6:.2f} M)")
     batch = backend.make_train_batch()
 
     # Warmup
@@ -110,12 +113,17 @@ def run_train_loop(backend: BenchmarkBackend, cfg: dict, *, warmup: int, steps: 
         "global_tokens_per_s": global_tps,
         "peak_mem_gb": global_peak_mem,
         "mean_loss": sum(losses) / len(losses) if losses else float("nan"),
+        "num_params": getattr(backend, "num_params", 0),
         "raw_step_times": times if rank == 0 else [],
     }
 
 
-def run_infer(backend: BenchmarkBackend, cfg: dict, *, prompt_len: int, max_new: int, batch_size: int) -> InferResult:
+def run_infer(backend: BenchmarkBackend, cfg: dict, *, prompt_len: int, max_new: int, batch_size: int, rank: int = 0) -> InferResult:
     backend.setup_infer(cfg)
+    if rank == 0:
+        n = getattr(backend, "num_params", 0)
+        if n > 0:
+            print(f"[model] backend={backend.name} params={n:,} ({n/1e6:.2f} M)")
     # 预热 1 次
     backend.infer_run(prompt_len=prompt_len, max_new_tokens=min(8, max_new), batch_size=batch_size)
     backend.reset_peak_mem()
@@ -197,19 +205,22 @@ def main():
                             "model": "XL",
                             "loop": loop_name,
                             "H": h, "L": l,
+                            "params_M": res["num_params"] / 1e6,
                             "median_step_ms": res["median_step_s"] * 1000,
                             "global_tokens_per_s": res["global_tokens_per_s"],
                             "peak_mem_gb": res["peak_mem_gb"],
                             "mean_loss": res["mean_loss"],
                         })
                         print(f"[train] {loop_name} H={h} L={l} step={res['median_step_s']*1000:.1f}ms "
-                              f"tok/s={res['global_tokens_per_s']:.0f} mem={res['peak_mem_gb']:.2f}GB")
+                              f"tok/s={res['global_tokens_per_s']:.0f} mem={res['peak_mem_gb']:.2f}GB "
+                              f"params={res['num_params']/1e6:.2f}M")
                 except Exception as e:
                     if rank == 0:
                         print(f"[train] {loop_name} FAILED: {type(e).__name__}: {e}")
                         train_rows.append({
                             "backend": "hrm", "model": "XL", "loop": loop_name,
                             "H": h, "L": l,
+                            "params_M": float("nan"),
                             "median_step_ms": float("nan"),
                             "global_tokens_per_s": float("nan"),
                             "peak_mem_gb": float("nan"),
@@ -224,19 +235,22 @@ def main():
                     ir = run_infer(backend, cfg,
                                    prompt_len=args.prompt_len,
                                    max_new=args.max_new,
-                                   batch_size=args.infer_batch_size)
+                                   batch_size=args.infer_batch_size,
+                                   rank=rank)
                     if rank == 0:
                         infer_rows.append({
                             "backend": "hrm",
                             "model": "XL",
                             "loop": loop_name,
                             "H": h, "L": l,
+                            "params_M": getattr(backend, "num_params", 0) / 1e6,
                             "ttft_ms": ir.ttft_s * 1000,
                             "decode_tok_s": ir.decode_tokens_per_s,
                             "decoded": ir.decode_tokens,
                             "infer_engine": "naive_pytorch",
                         })
-                        print(f"[infer] {loop_name} ttft={ir.ttft_s*1000:.1f}ms decode={ir.decode_tokens_per_s:.1f}tok/s")
+                        print(f"[infer] {loop_name} ttft={ir.ttft_s*1000:.1f}ms decode={ir.decode_tokens_per_s:.1f}tok/s "
+                              f"params={getattr(backend, 'num_params', 0)/1e6:.2f}M")
                 except Exception as e:
                     if rank == 0:
                         print(f"[infer] {loop_name} FAILED: {type(e).__name__}: {e}")
@@ -254,13 +268,15 @@ def main():
                         "backend": "qwen",
                         "model": cfg.get("model_name_or_path", "?"),
                         "loop": "-", "H": "-", "L": "-",
+                        "params_M": res["num_params"] / 1e6,
                         "median_step_ms": res["median_step_s"] * 1000,
                         "global_tokens_per_s": res["global_tokens_per_s"],
                         "peak_mem_gb": res["peak_mem_gb"],
                         "mean_loss": res["mean_loss"],
                     })
                     print(f"[train] qwen step={res['median_step_s']*1000:.1f}ms "
-                          f"tok/s={res['global_tokens_per_s']:.0f} mem={res['peak_mem_gb']:.2f}GB")
+                          f"tok/s={res['global_tokens_per_s']:.0f} mem={res['peak_mem_gb']:.2f}GB "
+                          f"params={res['num_params']/1e6:.2f}M")
             finally:
                 backend.cleanup()
 
@@ -271,17 +287,20 @@ def main():
                 ir = run_infer(backend, cfg,
                                prompt_len=args.prompt_len,
                                max_new=args.max_new,
-                               batch_size=args.infer_batch_size)
+                               batch_size=args.infer_batch_size,
+                               rank=rank)
                 infer_rows.append({
                     "backend": "qwen",
                     "model": cfg.get("model_name_or_path", "?"),
                     "loop": "-", "H": "-", "L": "-",
+                    "params_M": getattr(backend, "num_params", 0) / 1e6,
                     "ttft_ms": ir.ttft_s * 1000,
                     "decode_tok_s": ir.decode_tokens_per_s,
                     "decoded": ir.decode_tokens,
                     "infer_engine": "vllm",
                 })
-                print(f"[infer] qwen+vllm ttft={ir.ttft_s*1000:.1f}ms decode={ir.decode_tokens_per_s:.1f}tok/s")
+                print(f"[infer] qwen+vllm ttft={ir.ttft_s*1000:.1f}ms decode={ir.decode_tokens_per_s:.1f}tok/s "
+                      f"params={getattr(backend, 'num_params', 0)/1e6:.2f}M")
             finally:
                 backend.cleanup()
 
